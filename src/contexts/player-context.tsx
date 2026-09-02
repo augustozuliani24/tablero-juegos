@@ -10,6 +10,7 @@ type PlayerContextValue = {
   player: Player | null;
   loading: boolean;
   selectPlayer: (name: string) => Promise<void>;
+  loginAs: (player: Player) => void;
   logout: () => void;
 };
 
@@ -62,13 +63,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setPlayer(resolved);
   }
 
+  function loginAs(p: Player) {
+    localStorage.setItem(STORAGE_KEY, p.id);
+    setPlayer(p);
+  }
+
   function logout() {
     localStorage.removeItem(STORAGE_KEY);
     setPlayer(null);
   }
 
   return (
-    <PlayerContext.Provider value={{ player, loading, selectPlayer, logout }}>
+    <PlayerContext.Provider value={{ player, loading, selectPlayer, loginAs, logout }}>
       {children}
     </PlayerContext.Provider>
   );
