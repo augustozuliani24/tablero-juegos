@@ -19,6 +19,10 @@ type SessionRow = {
   }[];
 };
 
+function spotifySearchUrl(gameName: string) {
+  return `https://open.spotify.com/search/${encodeURIComponent(`${gameName} playlist para jugar`)}`;
+}
+
 export default function GameDetailPage() {
   const params = useParams<{ id: string }>();
   const gameId = params.id;
@@ -69,19 +73,30 @@ export default function GameDetailPage() {
 
   return (
     <div className="space-y-8">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">{game.name}</h1>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold text-primary-dark">{game.name}</h1>
         <button
           onClick={() => setShowForm((v) => !v)}
-          className="rounded-lg bg-neutral-900 px-4 py-2 text-sm text-white"
+          className="shrink-0 rounded-xl bg-gradient-to-r from-primary to-pink px-4 py-2 text-sm font-semibold text-white shadow-md shadow-primary/30 transition active:scale-95"
         >
           {showForm ? "Cancelar" : "Cargar partida"}
         </button>
       </div>
 
+      <a
+        href={spotifySearchUrl(game.name)}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="hover-wiggle flex items-center gap-3 rounded-2xl bg-[#1db954] px-4 py-3 text-white shadow-md shadow-[#1db954]/30 transition active:scale-95"
+      >
+        <span className="text-2xl">🎧</span>
+        <span className="font-semibold">Buscar playlists en Spotify para {game.name}</span>
+      </a>
+
       {showForm && (
         <LogSessionForm
           gameId={gameId}
+          mode={game.mode}
           onLogged={() => {
             setShowForm(false);
             loadAll();
@@ -90,18 +105,18 @@ export default function GameDetailPage() {
       )}
 
       <div>
-        <h2 className="mb-2 text-sm font-medium text-neutral-500">Tabla del juego</h2>
+        <h2 className="mb-2 text-sm font-semibold text-neutral-500">Tabla del juego</h2>
         {stats.length === 0 ? (
           <p className="text-sm text-neutral-500">Todavía no hay partidas registradas.</p>
         ) : (
-          <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white">
+          <div className="overflow-hidden rounded-2xl border-2 border-primary/10 bg-white">
             <table className="w-full text-sm">
-              <thead className="bg-neutral-100 text-left text-neutral-500">
+              <thead className="bg-primary/5 text-left text-primary-dark">
                 <tr>
-                  <th className="px-4 py-2 font-medium">Jugador</th>
-                  <th className="px-4 py-2 font-medium text-right">Partidas</th>
-                  <th className="px-4 py-2 font-medium text-right">Victorias</th>
-                  <th className="px-4 py-2 font-medium text-right">Puntos</th>
+                  <th className="px-4 py-2 font-semibold">Jugador</th>
+                  <th className="px-4 py-2 font-semibold text-right">Partidas</th>
+                  <th className="px-4 py-2 font-semibold text-right">Victorias</th>
+                  <th className="px-4 py-2 font-semibold text-right">Puntos</th>
                 </tr>
               </thead>
               <tbody>
@@ -120,13 +135,13 @@ export default function GameDetailPage() {
       </div>
 
       <div>
-        <h2 className="mb-2 text-sm font-medium text-neutral-500">Historial</h2>
+        <h2 className="mb-2 text-sm font-semibold text-neutral-500">Historial</h2>
         {sessions.length === 0 ? (
           <p className="text-sm text-neutral-500">Sin partidas todavía.</p>
         ) : (
           <div className="space-y-3">
             {sessions.map((s) => (
-              <div key={s.id} className="rounded-xl border border-neutral-200 bg-white p-3 text-sm">
+              <div key={s.id} className="rounded-2xl border-2 border-primary/10 bg-white p-3 text-sm">
                 <div className="mb-2 flex justify-between text-neutral-400">
                   <span>{new Date(s.played_at).toLocaleString("es-AR")}</span>
                   {s.duration_minutes && <span>{s.duration_minutes} min</span>}
@@ -134,7 +149,7 @@ export default function GameDetailPage() {
                 <div className="space-y-1">
                   {s.teams.map((t) => (
                     <div key={t.id} className="flex justify-between">
-                      <span className={t.is_winner ? "font-semibold" : ""}>
+                      <span className={t.is_winner ? "font-semibold text-primary-dark" : ""}>
                         {t.is_winner ? "🏆 " : ""}
                         {t.members.join(", ")}
                       </span>

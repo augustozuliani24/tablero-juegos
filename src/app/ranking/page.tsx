@@ -31,15 +31,17 @@ export default function RankingPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold">Ranking general</h1>
+      <h1 className="text-2xl font-bold text-primary-dark">🏆 Ranking general</h1>
 
       <div className="flex gap-2">
         {TABS.map((tab) => (
           <button
             key={tab.key}
             onClick={() => setSortKey(tab.key)}
-            className={`rounded-full px-3 py-1.5 text-sm ${
-              sortKey === tab.key ? "bg-neutral-900 text-white" : "bg-white border border-neutral-300 text-neutral-600"
+            className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+              sortKey === tab.key
+                ? "bg-gradient-to-r from-primary to-pink text-white shadow-md shadow-primary/30"
+                : "bg-white border-2 border-primary/15 text-neutral-600"
             }`}
           >
             {tab.label}
@@ -52,22 +54,24 @@ export default function RankingPage() {
       ) : sorted.length === 0 ? (
         <p className="text-sm text-neutral-500">Todavía no hay partidas cargadas.</p>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white">
+        <div className="overflow-hidden rounded-2xl border-2 border-primary/10 bg-white">
           <table className="w-full text-sm">
-            <thead className="bg-neutral-100 text-left text-neutral-500">
+            <thead className="bg-primary/5 text-left text-primary-dark">
               <tr>
-                <th className="px-4 py-2 font-medium">#</th>
-                <th className="px-4 py-2 font-medium">Jugador</th>
-                <th className="px-4 py-2 font-medium text-right">Partidas</th>
-                <th className="px-4 py-2 font-medium text-right">Victorias</th>
-                <th className="px-4 py-2 font-medium text-right">Puntos</th>
-                <th className="px-4 py-2 font-medium text-right">Combinado</th>
+                <th className="px-4 py-2 font-semibold">#</th>
+                <th className="px-4 py-2 font-semibold">Jugador</th>
+                <th className="px-4 py-2 font-semibold text-right">Partidas</th>
+                <th className="px-4 py-2 font-semibold text-right">Victorias</th>
+                <th className="px-4 py-2 font-semibold text-right">Puntos</th>
+                <th className="px-4 py-2 font-semibold text-right">Combinado</th>
               </tr>
             </thead>
             <tbody>
               {sorted.map((s, i) => (
                 <tr key={s.player_id} className="border-t border-neutral-100">
-                  <td className="px-4 py-2 text-neutral-500">{i + 1}</td>
+                  <td className="px-4 py-2 text-neutral-400">
+                    {i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : i + 1}
+                  </td>
                   <td className="px-4 py-2 font-medium">{s.player_name}</td>
                   <td className="px-4 py-2 text-right">{s.sessions_played}</td>
                   <td className="px-4 py-2 text-right">{s.wins}</td>

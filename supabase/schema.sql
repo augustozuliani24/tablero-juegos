@@ -12,6 +12,7 @@ create table players (
 create table games (
   id uuid primary key default gen_random_uuid(),
   name text not null unique,
+  mode text not null default 'ffa' check (mode in ('ffa', 'teams')),
   created_by uuid references players(id) on delete set null,
   created_at timestamptz not null default now()
 );
@@ -88,9 +89,11 @@ alter table scores enable row level security;
 
 create policy "public read players" on players for select using (true);
 create policy "public insert players" on players for insert with check (true);
+create policy "public delete players" on players for delete using (true);
 
 create policy "public read games" on games for select using (true);
 create policy "public insert games" on games for insert with check (true);
+create policy "public delete games" on games for delete using (true);
 
 create policy "public read sessions" on sessions for select using (true);
 create policy "public insert sessions" on sessions for insert with check (true);
@@ -98,9 +101,12 @@ create policy "public delete sessions" on sessions for delete using (true);
 
 create policy "public read teams" on teams for select using (true);
 create policy "public insert teams" on teams for insert with check (true);
+create policy "public delete teams" on teams for delete using (true);
 
 create policy "public read team_members" on team_members for select using (true);
 create policy "public insert team_members" on team_members for insert with check (true);
+create policy "public delete team_members" on team_members for delete using (true);
 
 create policy "public read scores" on scores for select using (true);
 create policy "public insert scores" on scores for insert with check (true);
+create policy "public delete scores" on scores for delete using (true);

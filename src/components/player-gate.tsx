@@ -17,7 +17,7 @@ export function PlayerGate({ children }: { children: ReactNode }) {
     return (
       <div className="flex min-h-screen items-center justify-center px-4">
         <form
-          className="w-full max-w-sm space-y-4"
+          className="animate-pop-in w-full max-w-sm space-y-5 rounded-3xl bg-white p-8 shadow-xl shadow-primary/10"
           onSubmit={async (e) => {
             e.preventDefault();
             setError("");
@@ -32,7 +32,8 @@ export function PlayerGate({ children }: { children: ReactNode }) {
           }}
         >
           <div className="text-center space-y-1">
-            <h1 className="text-2xl font-semibold">¿Quién sos?</h1>
+            <div className="text-5xl">🎲</div>
+            <h1 className="text-2xl font-bold text-primary-dark">¿Quién sos?</h1>
             <p className="text-sm text-neutral-500">Escribí tu nombre para entrar</p>
           </div>
           <input
@@ -40,15 +41,15 @@ export function PlayerGate({ children }: { children: ReactNode }) {
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Tu nombre"
-            className="w-full rounded-lg border border-neutral-300 px-4 py-3 text-center text-lg outline-none focus:border-neutral-500"
+            className="w-full rounded-xl border-2 border-primary/20 px-4 py-3 text-center text-lg outline-none focus:border-primary transition-colors"
           />
-          {error && <p className="text-center text-sm text-red-600">{error}</p>}
+          {error && <p className="text-center text-sm text-pink">{error}</p>}
           <button
             type="submit"
             disabled={submitting || !name.trim()}
-            className="w-full rounded-lg bg-neutral-900 px-4 py-3 text-white disabled:opacity-40"
+            className="w-full rounded-xl bg-gradient-to-r from-primary to-pink px-4 py-3 font-semibold text-white shadow-lg shadow-primary/30 transition active:scale-95 disabled:opacity-40 disabled:active:scale-100"
           >
-            {submitting ? "Entrando..." : "Entrar"}
+            {submitting ? "Entrando..." : "¡Entrar a jugar!"}
           </button>
         </form>
       </div>

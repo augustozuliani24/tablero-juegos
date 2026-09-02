@@ -1,26 +1,41 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { usePlayer } from "@/contexts/player-context";
-import type { Player } from "@/lib/database.types";
+import type { GameMode, Player } from "@/lib/database.types";
 
-type Participant = {
+type FfaEntry = {
   playerId: string;
   playerName: string;
-  team: string;
+  points: string;
+  winner: boolean;
 };
 
-export function LogSessionForm({ gameId, onLogged }: { gameId: string; onLogged: () => void }) {
+type TeamEntry = {
+  id: string;
+  name: string;
+  playerIds: string[];
+  points: string;
+  winner: boolean;
+};
+
+let uid = 0;
+const nextId = () => `t${Date.now()}${uid++}`;
+
+export function LogSessionForm({ gameId, mode, onLogged }: { gameId: string; mode: GameMode; onLogged: () => void }) {
   const { player } = usePlayer();
   const [allPlayers, setAllPlayers] = useState<Player[]>([]);
-  const [participants, setParticipants] = useState<Participant[]>([]);
-  const [newPlayerName, setNewPlayerName] = useState("");
   const [duration, setDuration] = useState("");
-  const [points, setPoints] = useState<Record<string, string>>({});
-  const [winners, setWinners] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  const [ffaEntries, setFfaEntries] = useState<FfaEntry[]>([]);
+  const [teams, setTeams] = useState<TeamEntry[]>([
+    { id: nextId(), name: "Equipo 1", playerIds: [], points: "", winner: false },
+    { id: nextId(), name: "Equipo 2", playerIds: [], points: "", winner: false },
+  ]);
+  const [newPlayerName, setNewPlayerName] = useState("");
 
   useEffect(() => {
     supabase
@@ -30,51 +45,87 @@ export function LogSessionForm({ gameId, onLogged }: { gameId: string; onLogged:
       .then(({ data }) => setAllPlayers(data ?? []));
   }, []);
 
-  function addParticipant(p: Player) {
-    if (participants.some((x) => x.playerId === p.id)) return;
-    setParticipants([...participants, { playerId: p.id, playerName: p.name, team: p.name }]);
+  async function ensurePlayer(name: string): Promise<Player | null> {
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    const { data: existing } = await supabase.from("players").select("*").ilike("name", trimmed).maybeSingle();
+    if (existing) return existing;
+    const { data: created, error } = await supabase.from("players").insert({ name: trimmed }).select("*").single();
+    if (error) return null;
+    return created;
   }
 
-  async function addNewPlayer() {
+  const usedPlayerIds =
+    mode === "ffa" ? ffaEntries.map((e) => e.playerId) : teams.flatMap((t) => t.playerIds);
+  const availablePlayers = allPlayers.filter((p) => !usedPlayerIds.includes(p.id));
+
+  function addExistingPlayer(p: Player, teamId?: string) {
+    if (mode === "ffa") {
+      setFfaEntries((prev) => [...prev, { playerId: p.id, playerName: p.name, points: "", winner: false }]);
+    } else if (teamId) {
+      setTeams((prev) =>
+        prev.map((t) => (t.id === teamId ? { ...t, playerIds: [...t.playerIds, p.id] } : t))
+      );
+      setAllPlayers((prev) => (prev.some((x) => x.id === p.id) ? prev : [...prev, p]));
+    }
+  }
+
+  async function addNewPlayer(teamId?: string) {
     const name = newPlayerName.trim();
     if (!name) return;
-    const { data: existing } = await supabase.from("players").select("*").ilike("name", name).maybeSingle();
-    let p = existing;
-    if (!p) {
-      const { data: created, error } = await supabase.from("players").insert({ name }).select("*").single();
-      if (error) return;
-      p = created;
-    }
-    setAllPlayers((prev) => (prev.some((x) => x.id === p!.id) ? prev : [...prev, p!]));
-    addParticipant(p);
+    const p = await ensurePlayer(name);
+    if (!p) return;
+    setAllPlayers((prev) => (prev.some((x) => x.id === p.id) ? prev : [...prev, p]));
+    addExistingPlayer(p, teamId);
     setNewPlayerName("");
   }
 
-  function removeParticipant(playerId: string) {
-    setParticipants(participants.filter((x) => x.playerId !== playerId));
+  function removeFfaEntry(playerId: string) {
+    setFfaEntries((prev) => prev.filter((e) => e.playerId !== playerId));
   }
 
-  function updateTeam(playerId: string, team: string) {
-    setParticipants(participants.map((x) => (x.playerId === playerId ? { ...x, team } : x)));
+  function updateFfaEntry(playerId: string, patch: Partial<FfaEntry>) {
+    setFfaEntries((prev) => prev.map((e) => (e.playerId === playerId ? { ...e, ...patch } : e)));
   }
 
-  const teams = useMemo(() => {
-    const map = new Map<string, Participant[]>();
-    for (const p of participants) {
-      const label = p.team.trim() || p.playerName;
-      if (!map.has(label)) map.set(label, []);
-      map.get(label)!.push(p);
-    }
-    return Array.from(map.entries());
-  }, [participants]);
+  function addTeam() {
+    setTeams((prev) => [...prev, { id: nextId(), name: `Equipo ${prev.length + 1}`, playerIds: [], points: "", winner: false }]);
+  }
+
+  function removeTeam(teamId: string) {
+    setTeams((prev) => prev.filter((t) => t.id !== teamId));
+  }
+
+  function updateTeam(teamId: string, patch: Partial<TeamEntry>) {
+    setTeams((prev) => prev.map((t) => (t.id === teamId ? { ...t, ...patch } : t)));
+  }
+
+  function removePlayerFromTeam(teamId: string, playerId: string) {
+    setTeams((prev) =>
+      prev.map((t) => (t.id === teamId ? { ...t, playerIds: t.playerIds.filter((id) => id !== playerId) } : t))
+    );
+  }
+
+  function playerName(id: string) {
+    return allPlayers.find((p) => p.id === id)?.name ?? "?";
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    if (participants.length === 0) {
-      setError("Agregá al menos un jugador.");
+
+    const groups =
+      mode === "ffa"
+        ? ffaEntries.map((e) => ({ name: e.playerName, playerIds: [e.playerId], points: e.points, winner: e.winner }))
+        : teams
+            .filter((t) => t.playerIds.length > 0)
+            .map((t) => ({ name: t.name, playerIds: t.playerIds, points: t.points, winner: t.winner }));
+
+    if (groups.length === 0) {
+      setError(mode === "ffa" ? "Agregá al menos un jugador." : "Agregá al menos un equipo con jugadores.");
       return;
     }
+
     setSaving(true);
     try {
       const { data: session, error: sessionError } = await supabase
@@ -88,30 +139,32 @@ export function LogSessionForm({ gameId, onLogged }: { gameId: string; onLogged:
         .single();
       if (sessionError) throw sessionError;
 
-      for (const [label, members] of teams) {
+      for (const group of groups) {
         const { data: team, error: teamError } = await supabase
           .from("teams")
-          .insert({ session_id: session.id, label })
+          .insert({ session_id: session.id, label: group.name })
           .select("*")
           .single();
         if (teamError) throw teamError;
 
         const { error: membersError } = await supabase
           .from("team_members")
-          .insert(members.map((m) => ({ team_id: team.id, player_id: m.playerId })));
+          .insert(group.playerIds.map((playerId) => ({ team_id: team.id, player_id: playerId })));
         if (membersError) throw membersError;
 
         const { error: scoreError } = await supabase.from("scores").insert({
           team_id: team.id,
-          points: Number(points[label] ?? 0) || 0,
-          is_winner: Boolean(winners[label]),
+          points: Number(group.points) || 0,
+          is_winner: Boolean(group.winner),
         });
         if (scoreError) throw scoreError;
       }
 
-      setParticipants([]);
-      setPoints({});
-      setWinners({});
+      setFfaEntries([]);
+      setTeams([
+        { id: nextId(), name: "Equipo 1", playerIds: [], points: "", winner: false },
+        { id: nextId(), name: "Equipo 2", playerIds: [], points: "", winner: false },
+      ]);
       setDuration("");
       onLogged();
     } catch {
@@ -121,98 +174,158 @@ export function LogSessionForm({ gameId, onLogged }: { gameId: string; onLogged:
     }
   }
 
-  const availablePlayers = allPlayers.filter((p) => !participants.some((x) => x.playerId === p.id));
-
   return (
-    <form onSubmit={submit} className="space-y-5 rounded-xl border border-neutral-200 bg-white p-4">
-      <div>
-        <p className="mb-2 text-sm font-medium">Jugadores</p>
-        {availablePlayers.length > 0 && (
-          <div className="mb-2 flex flex-wrap gap-2">
-            {availablePlayers.map((p) => (
-              <button
-                type="button"
-                key={p.id}
-                onClick={() => addParticipant(p)}
-                className="rounded-full border border-neutral-300 px-3 py-1 text-sm hover:border-neutral-500"
-              >
-                + {p.name}
-              </button>
-            ))}
+    <form onSubmit={submit} className="animate-float-in space-y-5 rounded-2xl border-2 border-primary/10 bg-white p-4 shadow-sm">
+      {mode === "ffa" ? (
+        <div className="space-y-3">
+          <p className="text-sm font-semibold text-primary-dark">Jugadores</p>
+          {availablePlayers.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {availablePlayers.map((p) => (
+                <button
+                  type="button"
+                  key={p.id}
+                  onClick={() => addExistingPlayer(p)}
+                  className="rounded-full border-2 border-primary/20 px-3 py-1 text-sm hover:border-primary transition-colors"
+                >
+                  + {p.name}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-2">
+            <input
+              value={newPlayerName}
+              onChange={(e) => setNewPlayerName(e.target.value)}
+              placeholder="Nombre de un jugador nuevo"
+              className="flex-1 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm outline-none focus:border-primary"
+            />
+            <button
+              type="button"
+              onClick={() => addNewPlayer()}
+              disabled={!newPlayerName.trim()}
+              className="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
+            >
+              Agregar
+            </button>
           </div>
-        )}
-        <div className="flex gap-2">
-          <input
-            value={newPlayerName}
-            onChange={(e) => setNewPlayerName(e.target.value)}
-            placeholder="Nombre de un jugador nuevo"
-            className="flex-1 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm outline-none focus:border-neutral-500"
-          />
+
+          {ffaEntries.length > 0 && (
+            <div className="space-y-2 pt-2">
+              {ffaEntries.map((e) => (
+                <div key={e.playerId} className="flex items-center gap-2">
+                  <span className="w-24 shrink-0 truncate text-sm font-medium">{e.playerName}</span>
+                  <input
+                    type="number"
+                    value={e.points}
+                    onChange={(ev) => updateFfaEntry(e.playerId, { points: ev.target.value })}
+                    placeholder="Puntos"
+                    className="w-20 rounded-lg border border-neutral-300 px-2 py-1.5 text-sm outline-none focus:border-primary"
+                  />
+                  <label className="flex items-center gap-1 text-sm text-neutral-600">
+                    <input
+                      type="checkbox"
+                      checked={e.winner}
+                      onChange={(ev) => updateFfaEntry(e.playerId, { winner: ev.target.checked })}
+                    />
+                    🏆
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => removeFfaEntry(e.playerId)}
+                    className="ml-auto text-neutral-400 hover:text-pink"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <p className="text-sm font-semibold text-primary-dark">Equipos</p>
+          {teams.map((team) => (
+            <div key={team.id} className="rounded-xl border-2 border-primary/10 p-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <input
+                  value={team.name}
+                  onChange={(e) => updateTeam(team.id, { name: e.target.value })}
+                  className="flex-1 rounded-lg border border-neutral-300 px-2 py-1.5 text-sm font-semibold outline-none focus:border-primary"
+                />
+                <input
+                  type="number"
+                  value={team.points}
+                  onChange={(e) => updateTeam(team.id, { points: e.target.value })}
+                  placeholder="Puntos"
+                  className="w-20 rounded-lg border border-neutral-300 px-2 py-1.5 text-sm outline-none focus:border-primary"
+                />
+                <label className="flex items-center gap-1 text-sm text-neutral-600">
+                  <input
+                    type="checkbox"
+                    checked={team.winner}
+                    onChange={(e) => updateTeam(team.id, { winner: e.target.checked })}
+                  />
+                  🏆
+                </label>
+                {teams.length > 2 && (
+                  <button type="button" onClick={() => removeTeam(team.id)} className="text-neutral-400 hover:text-pink">
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              <div className="flex flex-wrap gap-1.5">
+                {team.playerIds.map((id) => (
+                  <span key={id} className="flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary-dark">
+                    {playerName(id)}
+                    <button type="button" onClick={() => removePlayerFromTeam(team.id, id)} className="text-primary-dark/50 hover:text-pink">
+                      ✕
+                    </button>
+                  </span>
+                ))}
+              </div>
+
+              {availablePlayers.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {availablePlayers.map((p) => (
+                    <button
+                      type="button"
+                      key={p.id}
+                      onClick={() => addExistingPlayer(p, team.id)}
+                      className="rounded-full border border-dashed border-neutral-300 px-2.5 py-1 text-xs text-neutral-500 hover:border-primary hover:text-primary transition-colors"
+                    >
+                      + {p.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <input
+                  value={newPlayerName}
+                  onChange={(e) => setNewPlayerName(e.target.value)}
+                  placeholder="Nombre nuevo para este equipo"
+                  className="flex-1 rounded-lg border border-neutral-300 px-2 py-1.5 text-xs outline-none focus:border-primary"
+                />
+                <button
+                  type="button"
+                  onClick={() => addNewPlayer(team.id)}
+                  disabled={!newPlayerName.trim()}
+                  className="rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-white disabled:opacity-40"
+                >
+                  Agregar
+                </button>
+              </div>
+            </div>
+          ))}
           <button
             type="button"
-            onClick={addNewPlayer}
-            disabled={!newPlayerName.trim()}
-            className="rounded-lg bg-neutral-900 px-3 py-1.5 text-sm text-white disabled:opacity-40"
+            onClick={addTeam}
+            className="w-full rounded-xl border-2 border-dashed border-primary/30 py-2 text-sm font-medium text-primary hover:bg-primary/5 transition-colors"
           >
-            Agregar
+            + Agregar equipo
           </button>
-        </div>
-      </div>
-
-      {participants.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-sm font-medium">
-            Equipo de cada jugador{" "}
-            <span className="font-normal text-neutral-400">
-              (poné el mismo nombre de equipo a quienes juegan juntos; si es todos contra todos, dejalo como está)
-            </span>
-          </p>
-          {participants.map((p) => (
-            <div key={p.playerId} className="flex items-center gap-2">
-              <span className="w-28 shrink-0 text-sm">{p.playerName}</span>
-              <input
-                value={p.team}
-                onChange={(e) => updateTeam(p.playerId, e.target.value)}
-                className="flex-1 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm outline-none focus:border-neutral-500"
-              />
-              <button
-                type="button"
-                onClick={() => removeParticipant(p.playerId)}
-                className="text-sm text-neutral-400 hover:text-red-600"
-              >
-                ✕
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {teams.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-sm font-medium">Puntos por equipo</p>
-          {teams.map(([label, members]) => (
-            <div key={label} className="flex items-center gap-2">
-              <span className="w-40 shrink-0 truncate text-sm">
-                {label}
-                <span className="text-neutral-400"> ({members.map((m) => m.playerName).join(", ")})</span>
-              </span>
-              <input
-                type="number"
-                value={points[label] ?? ""}
-                onChange={(e) => setPoints({ ...points, [label]: e.target.value })}
-                placeholder="Puntos"
-                className="w-24 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm outline-none focus:border-neutral-500"
-              />
-              <label className="flex items-center gap-1 text-sm text-neutral-600">
-                <input
-                  type="checkbox"
-                  checked={Boolean(winners[label])}
-                  onChange={(e) => setWinners({ ...winners, [label]: e.target.checked })}
-                />
-                Ganador
-              </label>
-            </div>
-          ))}
         </div>
       )}
 
@@ -222,16 +335,16 @@ export function LogSessionForm({ gameId, onLogged }: { gameId: string; onLogged:
           type="number"
           value={duration}
           onChange={(e) => setDuration(e.target.value)}
-          className="w-24 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm outline-none focus:border-neutral-500"
+          className="w-24 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm outline-none focus:border-primary"
         />
       </div>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-pink">{error}</p>}
 
       <button
         type="submit"
-        disabled={saving || participants.length === 0}
-        className="w-full rounded-lg bg-neutral-900 px-4 py-2 text-white disabled:opacity-40"
+        disabled={saving}
+        className="w-full rounded-xl bg-gradient-to-r from-primary to-pink px-4 py-2.5 font-semibold text-white shadow-md shadow-primary/30 transition active:scale-95 disabled:opacity-40"
       >
         {saving ? "Guardando..." : "Guardar partida"}
       </button>

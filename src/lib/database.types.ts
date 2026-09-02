@@ -4,9 +4,12 @@ export type Player = {
   created_at: string;
 };
 
+export type GameMode = "ffa" | "teams";
+
 export type Game = {
   id: string;
   name: string;
+  mode: GameMode;
   created_by: string | null;
   created_at: string;
 };
