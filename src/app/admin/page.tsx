@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import type { Game, Player } from "@/lib/database.types";
 
@@ -53,7 +54,39 @@ export default function AdminPage() {
   async function deletePlayer(p: Player) {
     if (!confirm(`¿Borrar a "${p.name}"? Esto lo saca de todas las partidas donde jugó.`)) return;
     setBusyId(p.id);
+
+    const { data: memberRows } = await supabase.from("team_members").select("team_id").eq("player_id", p.id);
+    const affectedTeamIds = (memberRows ?? []).map((r) => r.team_id);
+
     await supabase.from("players").delete().eq("id", p.id);
+
+    if (affectedTeamIds.length > 0) {
+      const { data: remainingMembers } = await supabase
+        .from("team_members")
+        .select("team_id")
+        .in("team_id", affectedTeamIds);
+      const stillHasMembers = new Set((remainingMembers ?? []).map((r) => r.team_id));
+      const emptyTeamIds = affectedTeamIds.filter((id) => !stillHasMembers.has(id));
+
+      if (emptyTeamIds.length > 0) {
+        const { data: emptyTeams } = await supabase.from("teams").select("id, session_id").in("id", emptyTeamIds);
+        await supabase.from("teams").delete().in("id", emptyTeamIds);
+
+        const affectedSessionIds = [...new Set((emptyTeams ?? []).map((t) => t.session_id))];
+        if (affectedSessionIds.length > 0) {
+          const { data: remainingTeams } = await supabase
+            .from("teams")
+            .select("session_id")
+            .in("session_id", affectedSessionIds);
+          const stillHasTeams = new Set((remainingTeams ?? []).map((t) => t.session_id));
+          const emptySessionIds = affectedSessionIds.filter((id) => !stillHasTeams.has(id));
+          if (emptySessionIds.length > 0) {
+            await supabase.from("sessions").delete().in("id", emptySessionIds);
+          }
+        }
+      }
+    }
+
     await loadData();
     setBusyId(null);
   }
@@ -66,9 +99,19 @@ export default function AdminPage() {
     setBusyId(null);
   }
 
+  function lockAdmin() {
+    sessionStorage.removeItem(SESSION_KEY);
+    setUnlocked(false);
+    setPassword("");
+  }
+
   if (!unlocked) {
     return (
-      <div className="flex min-h-[70vh] items-center justify-center px-4">
+      <div className="space-y-4">
+        <Link href="/" className="inline-flex items-center gap-1 text-sm font-medium text-neutral-500 hover:text-primary transition-colors">
+          ← Volver
+        </Link>
+        <div className="flex min-h-[60vh] items-center justify-center px-4">
         <form onSubmit={tryUnlock} className="animate-pop-in w-full max-w-sm space-y-4 rounded-2xl bg-white p-6 shadow-lg">
           <div className="text-center space-y-1">
             <div className="text-4xl">🔒</div>
@@ -90,12 +133,21 @@ export default function AdminPage() {
             Entrar
           </button>
         </form>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-8">
+      <div className="flex items-center justify-between">
+        <Link href="/" className="inline-flex items-center gap-1 text-sm font-medium text-neutral-500 hover:text-primary transition-colors">
+          ← Volver
+        </Link>
+        <button onClick={lockAdmin} className="text-sm font-medium text-neutral-400 hover:text-pink transition-colors">
+          Cerrar sesión de admin
+        </button>
+      </div>
       <h1 className="text-2xl font-bold text-primary-dark">⚙️ Administrador</h1>
 
       {loading ? (

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { LogSessionForm } from "@/components/log-session-form";
@@ -73,6 +74,9 @@ export default function GameDetailPage() {
 
   return (
     <div className="space-y-8">
+      <Link href="/" className="inline-flex items-center gap-1 text-sm font-medium text-neutral-500 hover:text-primary transition-colors">
+        ← Volver a juegos
+      </Link>
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-2xl font-bold text-primary-dark">{game.name}</h1>
         <button
