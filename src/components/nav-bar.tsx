@@ -7,6 +7,7 @@ import { usePlayer } from "@/contexts/player-context";
 const links = [
   { href: "/", label: "🎲 Juegos" },
   { href: "/ranking", label: "🏆 Ranking" },
+  { href: "/profile", label: "📊 Mi perfil" },
 ];
 
 export function NavBar() {
