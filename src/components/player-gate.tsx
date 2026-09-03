@@ -5,10 +5,14 @@ import { supabase } from "@/lib/supabase";
 import { usePlayer } from "@/contexts/player-context";
 import type { Player } from "@/lib/database.types";
 
+function firstName(name: string) {
+  return name.trim().split(/\s+/)[0] ?? name;
+}
+
 export function PlayerGate({ children }: { children: ReactNode }) {
   const { player, loading, selectPlayer, loginAs } = usePlayer();
   const [existingPlayers, setExistingPlayers] = useState<Player[] | null>(null);
-  const [mode, setMode] = useState<"pick" | "new">("pick");
+  const [mode, setMode] = useState<"landing" | "pick" | "new">("landing");
   const [name, setName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -18,10 +22,12 @@ export function PlayerGate({ children }: { children: ReactNode }) {
     supabase
       .from("players")
       .select("*")
-      .order("name")
       .then(({ data }) => {
-        setExistingPlayers(data ?? []);
-        if (!data || data.length === 0) setMode("new");
+        const sorted = [...(data ?? [])].sort((a, b) =>
+          firstName(a.name).localeCompare(firstName(b.name), "es", { sensitivity: "base" })
+        );
+        setExistingPlayers(sorted);
+        if (sorted.length === 0) setMode("new");
       });
   }, [player, loading]);
 
@@ -36,15 +42,36 @@ export function PlayerGate({ children }: { children: ReactNode }) {
           <div className="text-center space-y-1">
             <div className="text-5xl">🎲</div>
             <h1 className="text-2xl font-bold text-primary-dark">
-              {mode === "pick" ? "¿Quién juega?" : "¿Quién sos?"}
+              {mode === "landing" ? "¡Bienvenido!" : mode === "pick" ? "¿Quién juega?" : "¿Quién sos?"}
             </h1>
             <p className="text-sm text-neutral-500">
-              {mode === "pick" ? "Tocá tu perfil para entrar" : "Escribí tu nombre para entrar"}
+              {mode === "landing"
+                ? "Iniciá para elegir tu perfil"
+                : mode === "pick"
+                  ? "Tocá tu perfil para entrar"
+                  : "Escribí tu nombre para entrar"}
             </p>
           </div>
 
-          {mode === "pick" ? (
-            existingPlayers === null ? (
+          {mode === "landing" && (
+            <div className="space-y-2">
+              <button
+                onClick={() => setMode("pick")}
+                className="w-full rounded-xl bg-gradient-to-r from-primary to-pink px-4 py-3 font-semibold text-white shadow-lg shadow-primary/30 transition active:scale-95"
+              >
+                Iniciar
+              </button>
+              <button
+                onClick={() => setMode("new")}
+                className="w-full rounded-xl border-2 border-dashed border-neutral-300 py-2.5 text-sm font-medium text-neutral-500 hover:border-primary hover:text-primary transition-colors"
+              >
+                + Soy nuevo
+              </button>
+            </div>
+          )}
+
+          {mode === "pick" &&
+            (existingPlayers === null ? (
               <p className="text-center text-sm text-neutral-400">Cargando perfiles...</p>
             ) : (
               <>
@@ -60,14 +87,15 @@ export function PlayerGate({ children }: { children: ReactNode }) {
                   ))}
                 </div>
                 <button
-                  onClick={() => setMode("new")}
-                  className="w-full rounded-xl border-2 border-dashed border-neutral-300 py-2.5 text-sm font-medium text-neutral-500 hover:border-primary hover:text-primary transition-colors"
+                  onClick={() => setMode("landing")}
+                  className="w-full text-center text-sm text-neutral-400 hover:text-primary transition-colors"
                 >
-                  + Soy nuevo
+                  ← Volver
                 </button>
               </>
-            )
-          ) : (
+            ))}
+
+          {mode === "new" && (
             <form
               className="space-y-4"
               onSubmit={async (e) => {
@@ -98,15 +126,13 @@ export function PlayerGate({ children }: { children: ReactNode }) {
               >
                 {submitting ? "Entrando..." : "¡Entrar a jugar!"}
               </button>
-              {existingPlayers && existingPlayers.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setMode("pick")}
-                  className="w-full text-center text-sm text-neutral-400 hover:text-primary transition-colors"
-                >
-                  ← Ya jugué antes
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => setMode(existingPlayers && existingPlayers.length > 0 ? "pick" : "landing")}
+                className="w-full text-center text-sm text-neutral-400 hover:text-primary transition-colors"
+              >
+                ← Volver
+              </button>
             </form>
           )}
         </div>

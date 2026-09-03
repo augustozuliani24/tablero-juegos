@@ -33,6 +33,10 @@ export default function GameDetailPage() {
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [showAllHistory, setShowAllHistory] = useState(false);
+
+  const HISTORY_PREVIEW_COUNT = 3;
+  const CONDENSED_THRESHOLD = 15;
 
   const loadAll = useCallback(async () => {
     const [{ data: gameData }, { data: statsData }, { data: sessionsData }] = await Promise.all([
@@ -53,13 +57,15 @@ export default function GameDetailPage() {
         id: s.id,
         played_at: s.played_at,
         duration_minutes: s.duration_minutes,
-        teams: (s.teams ?? []).map((t: any) => ({
-          id: t.id,
-          label: t.label,
-          points: t.scores?.points ?? 0,
-          is_winner: t.scores?.is_winner ?? false,
-          members: (t.team_members ?? []).map((tm: any) => tm.players?.name).filter(Boolean),
-        })),
+        teams: (s.teams ?? [])
+          .map((t: any) => ({
+            id: t.id,
+            label: t.label,
+            points: t.scores?.points ?? 0,
+            is_winner: t.scores?.is_winner ?? false,
+            members: (t.team_members ?? []).map((tm: any) => tm.players?.name).filter(Boolean),
+          }))
+          .sort((a: any, b: any) => b.points - a.points),
       }))
     );
     setLoading(false);
@@ -144,25 +150,56 @@ export default function GameDetailPage() {
           <p className="text-sm text-neutral-500">Sin partidas todavía.</p>
         ) : (
           <div className="space-y-3">
-            {sessions.map((s) => (
-              <div key={s.id} className="rounded-2xl border-2 border-primary/10 bg-white p-3 text-sm">
-                <div className="mb-2 flex justify-between text-neutral-400">
-                  <span>{new Date(s.played_at).toLocaleString("es-AR")}</span>
-                  {s.duration_minutes && <span>{s.duration_minutes} min</span>}
-                </div>
-                <div className="space-y-1">
-                  {s.teams.map((t) => (
-                    <div key={t.id} className="flex justify-between">
-                      <span className={t.is_winner ? "font-semibold text-primary-dark" : ""}>
-                        {t.is_winner ? "🏆 " : ""}
-                        {t.members.join(", ")}
-                      </span>
-                      <span className="text-neutral-500">{t.points} pts</span>
+            {(showAllHistory ? sessions : sessions.slice(0, HISTORY_PREVIEW_COUNT)).map((s, i) => {
+              const condensed = sessions.length > CONDENSED_THRESHOLD && i >= HISTORY_PREVIEW_COUNT;
+              const winners = s.teams.filter((t) => t.is_winner);
+              return (
+                <div key={s.id} className="rounded-2xl border-2 border-primary/10 bg-white p-3 text-sm">
+                  <div className="mb-2 flex justify-between text-neutral-400">
+                    <span>{new Date(s.played_at).toLocaleString("es-AR")}</span>
+                    {!condensed && s.duration_minutes && <span>{s.duration_minutes} min</span>}
+                  </div>
+                  {condensed ? (
+                    <div className="space-y-1">
+                      {winners.map((t) => (
+                        <div key={t.id} className="flex justify-between">
+                          <span className="font-semibold text-primary-dark">🏆 {t.members.join(", ")}</span>
+                          <span className="text-neutral-500">{t.points} pts</span>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  ) : (
+                    <div className="space-y-1">
+                      {s.teams.map((t) => (
+                        <div key={t.id} className="flex justify-between">
+                          <span className={t.is_winner ? "font-semibold text-primary-dark" : ""}>
+                            {t.is_winner ? "🏆 " : ""}
+                            {t.members.join(", ")}
+                          </span>
+                          <span className="text-neutral-500">{t.points} pts</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
+            {!showAllHistory && sessions.length > HISTORY_PREVIEW_COUNT && (
+              <button
+                onClick={() => setShowAllHistory(true)}
+                className="w-full rounded-xl border-2 border-dashed border-primary/30 py-2 text-sm font-medium text-primary hover:bg-primary/5 transition-colors"
+              >
+                Ver más ({sessions.length - HISTORY_PREVIEW_COUNT} más)
+              </button>
+            )}
+            {showAllHistory && sessions.length > HISTORY_PREVIEW_COUNT && (
+              <button
+                onClick={() => setShowAllHistory(false)}
+                className="w-full rounded-xl border-2 border-dashed border-neutral-200 py-2 text-sm font-medium text-neutral-400 hover:bg-neutral-50 transition-colors"
+              >
+                Ver menos
+              </button>
+            )}
           </div>
         )}
       </div>
