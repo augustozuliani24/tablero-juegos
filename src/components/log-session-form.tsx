@@ -9,7 +9,6 @@ type FfaEntry = {
   playerId: string;
   playerName: string;
   points: string;
-  winner: boolean;
 };
 
 type TeamEntry = {
@@ -17,7 +16,6 @@ type TeamEntry = {
   name: string;
   playerIds: string[];
   points: string;
-  winner: boolean;
 };
 
 let uid = 0;
@@ -32,8 +30,8 @@ export function LogSessionForm({ gameId, mode, onLogged }: { gameId: string; mod
 
   const [ffaEntries, setFfaEntries] = useState<FfaEntry[]>([]);
   const [teams, setTeams] = useState<TeamEntry[]>([
-    { id: nextId(), name: "Equipo 1", playerIds: [], points: "", winner: false },
-    { id: nextId(), name: "Equipo 2", playerIds: [], points: "", winner: false },
+    { id: nextId(), name: "Equipo 1", playerIds: [], points: "" },
+    { id: nextId(), name: "Equipo 2", playerIds: [], points: "" },
   ]);
   const [newPlayerName, setNewPlayerName] = useState("");
 
@@ -61,7 +59,7 @@ export function LogSessionForm({ gameId, mode, onLogged }: { gameId: string; mod
 
   function addExistingPlayer(p: Player, teamId?: string) {
     if (mode === "ffa") {
-      setFfaEntries((prev) => [...prev, { playerId: p.id, playerName: p.name, points: "", winner: false }]);
+      setFfaEntries((prev) => [...prev, { playerId: p.id, playerName: p.name, points: "" }]);
     } else if (teamId) {
       setTeams((prev) =>
         prev.map((t) => (t.id === teamId ? { ...t, playerIds: [...t.playerIds, p.id] } : t))
@@ -89,7 +87,7 @@ export function LogSessionForm({ gameId, mode, onLogged }: { gameId: string; mod
   }
 
   function addTeam() {
-    setTeams((prev) => [...prev, { id: nextId(), name: `Equipo ${prev.length + 1}`, playerIds: [], points: "", winner: false }]);
+    setTeams((prev) => [...prev, { id: nextId(), name: `Equipo ${prev.length + 1}`, playerIds: [], points: "" }]);
   }
 
   function removeTeam(teamId: string) {
@@ -114,17 +112,21 @@ export function LogSessionForm({ gameId, mode, onLogged }: { gameId: string; mod
     e.preventDefault();
     setError("");
 
-    const groups =
+    const rawGroups =
       mode === "ffa"
-        ? ffaEntries.map((e) => ({ name: e.playerName, playerIds: [e.playerId], points: e.points, winner: e.winner }))
+        ? ffaEntries.map((e) => ({ name: e.playerName, playerIds: [e.playerId], points: e.points }))
         : teams
             .filter((t) => t.playerIds.length > 0)
-            .map((t) => ({ name: t.name, playerIds: t.playerIds, points: t.points, winner: t.winner }));
+            .map((t) => ({ name: t.name, playerIds: t.playerIds, points: t.points }));
 
-    if (groups.length === 0) {
+    if (rawGroups.length === 0) {
       setError(mode === "ffa" ? "Agregá al menos un jugador." : "Agregá al menos un equipo con jugadores.");
       return;
     }
+
+    const numericPoints = rawGroups.map((g) => Number(g.points) || 0);
+    const maxPoints = Math.max(...numericPoints);
+    const groups = rawGroups.map((g, i) => ({ ...g, winner: maxPoints > 0 && numericPoints[i] === maxPoints }));
 
     setSaving(true);
     try {
@@ -162,8 +164,8 @@ export function LogSessionForm({ gameId, mode, onLogged }: { gameId: string; mod
 
       setFfaEntries([]);
       setTeams([
-        { id: nextId(), name: "Equipo 1", playerIds: [], points: "", winner: false },
-        { id: nextId(), name: "Equipo 2", playerIds: [], points: "", winner: false },
+        { id: nextId(), name: "Equipo 1", playerIds: [] , points: "" },
+        { id: nextId(), name: "Equipo 2", playerIds: [], points: "" },
       ]);
       setDuration("");
       onLogged();
@@ -222,14 +224,6 @@ export function LogSessionForm({ gameId, mode, onLogged }: { gameId: string; mod
                     placeholder="Puntos"
                     className="w-20 rounded-lg border border-neutral-300 px-2 py-1.5 text-sm outline-none focus:border-primary"
                   />
-                  <label className="flex items-center gap-1 text-sm text-neutral-600">
-                    <input
-                      type="checkbox"
-                      checked={e.winner}
-                      onChange={(ev) => updateFfaEntry(e.playerId, { winner: ev.target.checked })}
-                    />
-                    🏆
-                  </label>
                   <button
                     type="button"
                     onClick={() => removeFfaEntry(e.playerId)}
@@ -260,14 +254,6 @@ export function LogSessionForm({ gameId, mode, onLogged }: { gameId: string; mod
                   placeholder="Puntos"
                   className="w-20 rounded-lg border border-neutral-300 px-2 py-1.5 text-sm outline-none focus:border-primary"
                 />
-                <label className="flex items-center gap-1 text-sm text-neutral-600">
-                  <input
-                    type="checkbox"
-                    checked={team.winner}
-                    onChange={(e) => updateTeam(team.id, { winner: e.target.checked })}
-                  />
-                  🏆
-                </label>
                 {teams.length > 2 && (
                   <button type="button" onClick={() => removeTeam(team.id)} className="text-neutral-400 hover:text-pink">
                     ✕
@@ -338,6 +324,8 @@ export function LogSessionForm({ gameId, mode, onLogged }: { gameId: string; mod
           className="w-24 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm outline-none focus:border-primary"
         />
       </div>
+
+      <p className="text-xs text-neutral-400">🏆 El ganador se calcula solo, comparando los puntos que cargues.</p>
 
       {error && <p className="text-sm text-pink">{error}</p>}
 

@@ -83,13 +83,13 @@ export default function HomePage() {
 
       {showModal && (
         <div
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 px-4 pb-4 sm:pb-0"
+          className="fixed inset-0 z-50 overflow-y-auto bg-black/40 px-4 py-8"
           onClick={() => setShowModal(false)}
         >
           <form
             onClick={(e) => e.stopPropagation()}
             onSubmit={addGame}
-            className="animate-pop-in w-full max-w-sm space-y-4 rounded-2xl bg-white p-5"
+            className="animate-pop-in mx-auto w-full max-w-sm space-y-4 rounded-2xl bg-white p-5"
           >
             <h2 className="text-lg font-bold text-primary-dark">Nuevo juego</h2>
             <input

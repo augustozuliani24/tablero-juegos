@@ -99,6 +99,19 @@ export default function AdminPage() {
     setBusyId(null);
   }
 
+  async function clearGameHistory(g: Game) {
+    if (
+      !confirm(
+        `¿Vaciar el historial de "${g.name}"? Esto borra todas sus partidas y estadísticas, pero el juego sigue existiendo.`
+      )
+    )
+      return;
+    setBusyId(`clear-${g.id}`);
+    await supabase.from("sessions").delete().eq("game_id", g.id);
+    await loadData();
+    setBusyId(null);
+  }
+
   function lockAdmin() {
     sessionStorage.removeItem(SESSION_KEY);
     setUnlocked(false);
@@ -158,15 +171,24 @@ export default function AdminPage() {
             <h2 className="text-sm font-semibold text-neutral-500">Juegos</h2>
             <div className="space-y-2">
               {games.map((g) => (
-                <div key={g.id} className="flex items-center justify-between rounded-xl border-2 border-primary/10 bg-white px-4 py-2.5">
+                <div key={g.id} className="flex items-center justify-between gap-3 rounded-xl border-2 border-primary/10 bg-white px-4 py-2.5">
                   <span className="font-medium">{g.name}</span>
-                  <button
-                    onClick={() => deleteGame(g)}
-                    disabled={busyId === g.id}
-                    className="text-sm font-medium text-pink hover:underline disabled:opacity-40"
-                  >
-                    Borrar
-                  </button>
+                  <div className="flex shrink-0 gap-3">
+                    <button
+                      onClick={() => clearGameHistory(g)}
+                      disabled={busyId === `clear-${g.id}`}
+                      className="text-sm font-medium text-accent hover:underline disabled:opacity-40"
+                    >
+                      Vaciar historial
+                    </button>
+                    <button
+                      onClick={() => deleteGame(g)}
+                      disabled={busyId === g.id}
+                      className="text-sm font-medium text-pink hover:underline disabled:opacity-40"
+                    >
+                      Borrar
+                    </button>
+                  </div>
                 </div>
               ))}
               {games.length === 0 && <p className="text-sm text-neutral-400">No hay juegos cargados.</p>}
