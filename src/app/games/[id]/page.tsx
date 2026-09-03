@@ -1,16 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { LogSessionForm } from "@/components/log-session-form";
-import type { Game, PlayerGameStats } from "@/lib/database.types";
+import { GroupFilter, matchesGroupFilter } from "@/components/group-filter";
+import { ALL_GROUPS, fetchGroups, groupLabel, recallGroup } from "@/lib/groups";
+import type { Game, PlayerGameStats, PlayerGroup } from "@/lib/database.types";
 
 type SessionRow = {
   id: string;
   played_at: string;
   duration_minutes: number | null;
+  group_id: string | null;
   teams: {
     id: string;
     label: string | null;
@@ -18,6 +21,14 @@ type SessionRow = {
     is_winner: boolean;
     members: string[];
   }[];
+};
+
+type AggregatedGameStats = {
+  player_id: string;
+  player_name: string;
+  sessions_played: number;
+  wins: number;
+  total_points: number;
 };
 
 function spotifySearchUrl(gameName: string) {
@@ -31,32 +42,48 @@ export default function GameDetailPage() {
   const [game, setGame] = useState<Game | null>(null);
   const [stats, setStats] = useState<PlayerGameStats[]>([]);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
+  const [groups, setGroups] = useState<PlayerGroup[]>([]);
+  const [groupFilter, setGroupFilter] = useState<string>(ALL_GROUPS);
   const [showForm, setShowForm] = useState(false);
   const [loading, setLoading] = useState(true);
   const [showAllHistory, setShowAllHistory] = useState(false);
+  const initialGroupApplied = useRef(false);
 
   const HISTORY_PREVIEW_COUNT = 3;
   const CONDENSED_THRESHOLD = 15;
 
   const loadAll = useCallback(async () => {
-    const [{ data: gameData }, { data: statsData }, { data: sessionsData }] = await Promise.all([
+    const [{ data: gameData }, { data: statsData }, { data: sessionsData }, groupsData] = await Promise.all([
       supabase.from("games").select("*").eq("id", gameId).single(),
-      supabase.from("player_game_stats").select("*").eq("game_id", gameId).order("wins", { ascending: false }),
+      supabase.from("player_game_stats").select("*").eq("game_id", gameId),
       supabase
         .from("sessions")
-        .select("id, played_at, duration_minutes, teams(id, label, scores(points, is_winner), team_members(players(name)))")
+        .select(
+          "id, played_at, duration_minutes, group_id, teams(id, label, scores(points, is_winner), team_members(players(name)))"
+        )
         .eq("game_id", gameId)
         .order("played_at", { ascending: false }),
+      fetchGroups(),
     ]);
 
     setGame(gameData ?? null);
     setStats(statsData ?? []);
+    setGroups(groupsData);
+
+    // Solo la primera vez: arrancamos en el último grupo con el que se cargó
+    // una partida, sin pisar el filtro si ya lo cambiaron a mano.
+    if (!initialGroupApplied.current) {
+      initialGroupApplied.current = true;
+      const remembered = recallGroup();
+      if (remembered && groupsData.some((g) => g.id === remembered)) setGroupFilter(remembered);
+    }
 
     setSessions(
       (sessionsData ?? []).map((s: any) => ({
         id: s.id,
         played_at: s.played_at,
         duration_minutes: s.duration_minutes,
+        group_id: s.group_id ?? null,
         teams: (s.teams ?? [])
           .map((t: any) => ({
             id: t.id,
@@ -74,6 +101,43 @@ export default function GameDetailPage() {
   useEffect(() => {
     loadAll();
   }, [loadAll]);
+
+  const hasUngrouped = sessions.some((s) => s.group_id === null);
+
+  // La vista trae una fila por jugador y grupo: sumamos según el filtro elegido.
+  const visibleStats = useMemo(() => {
+    const byPlayer = new Map<string, AggregatedGameStats>();
+    for (const row of stats) {
+      if (!matchesGroupFilter(row.group_id, groupFilter)) continue;
+      const acc = byPlayer.get(row.player_id) ?? {
+        player_id: row.player_id,
+        player_name: row.player_name,
+        sessions_played: 0,
+        wins: 0,
+        total_points: 0,
+      };
+      acc.sessions_played += row.sessions_played;
+      acc.wins += row.wins;
+      acc.total_points += row.total_points;
+      byPlayer.set(row.player_id, acc);
+    }
+    return Array.from(byPlayer.values()).sort((a, b) => b.wins - a.wins || b.total_points - a.total_points);
+  }, [stats, groupFilter]);
+
+  const visibleSessions = useMemo(
+    () => sessions.filter((s) => matchesGroupFilter(s.group_id, groupFilter)),
+    [sessions, groupFilter]
+  );
+
+  const groupNameById = useMemo(() => new Map(groups.map((g) => [g.id, groupLabel(g)])), [groups]);
+
+  /** Permite asignarle un grupo a una partida vieja que quedó sin grupo. */
+  async function assignGroup(sessionId: string, groupId: string) {
+    if (!groupId) return;
+    setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, group_id: groupId } : s)));
+    await supabase.from("sessions").update({ group_id: groupId }).eq("id", sessionId);
+    loadAll();
+  }
 
   if (loading) return <p className="text-sm text-neutral-500">Cargando...</p>;
   if (!game) return <p className="text-sm text-neutral-500">Juego no encontrado.</p>;
@@ -114,10 +178,16 @@ export default function GameDetailPage() {
         />
       )}
 
+      <GroupFilter groups={groups} value={groupFilter} onChange={setGroupFilter} showNoGroup={hasUngrouped} />
+
       <div>
         <h2 className="mb-2 text-sm font-semibold text-neutral-500">Tabla del juego</h2>
-        {stats.length === 0 ? (
-          <p className="text-sm text-neutral-500">Todavía no hay partidas registradas.</p>
+        {visibleStats.length === 0 ? (
+          <p className="text-sm text-neutral-500">
+            {groupFilter === ALL_GROUPS
+              ? "Todavía no hay partidas registradas."
+              : "Este grupo todavía no jugó a este juego."}
+          </p>
         ) : (
           <div className="overflow-hidden rounded-2xl border-2 border-primary/10 bg-white">
             <table className="w-full text-sm">
@@ -130,7 +200,7 @@ export default function GameDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {stats.map((s) => (
+                {visibleStats.map((s) => (
                   <tr key={s.player_id} className="border-t border-neutral-100">
                     <td className="px-4 py-2 font-medium">{s.player_name}</td>
                     <td className="px-4 py-2 text-right">{s.sessions_played}</td>
@@ -146,18 +216,44 @@ export default function GameDetailPage() {
 
       <div>
         <h2 className="mb-2 text-sm font-semibold text-neutral-500">Historial</h2>
-        {sessions.length === 0 ? (
-          <p className="text-sm text-neutral-500">Sin partidas todavía.</p>
+        {visibleSessions.length === 0 ? (
+          <p className="text-sm text-neutral-500">
+            {groupFilter === ALL_GROUPS ? "Sin partidas todavía." : "Este grupo todavía no jugó a este juego."}
+          </p>
         ) : (
           <div className="space-y-3">
-            {(showAllHistory ? sessions : sessions.slice(0, HISTORY_PREVIEW_COUNT)).map((s, i) => {
-              const condensed = sessions.length > CONDENSED_THRESHOLD && i >= HISTORY_PREVIEW_COUNT;
+            {(showAllHistory ? visibleSessions : visibleSessions.slice(0, HISTORY_PREVIEW_COUNT)).map((s, i) => {
+              const condensed = visibleSessions.length > CONDENSED_THRESHOLD && i >= HISTORY_PREVIEW_COUNT;
               const winners = s.teams.filter((t) => t.is_winner);
               return (
                 <div key={s.id} className="rounded-2xl border-2 border-primary/10 bg-white p-3 text-sm">
-                  <div className="mb-2 flex justify-between text-neutral-400">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-neutral-400">
                     <span>{new Date(s.played_at).toLocaleString("es-AR")}</span>
-                    {!condensed && s.duration_minutes && <span>{s.duration_minutes} min</span>}
+                    <div className="flex items-center gap-2">
+                      {s.group_id && groupNameById.has(s.group_id) ? (
+                        groupFilter === ALL_GROUPS && (
+                          <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary-dark">
+                            {groupNameById.get(s.group_id)}
+                          </span>
+                        )
+                      ) : (
+                        groups.length > 0 && (
+                          <select
+                            value=""
+                            onChange={(e) => assignGroup(s.id, e.target.value)}
+                            className="rounded-full border border-dashed border-neutral-300 bg-transparent px-2 py-0.5 text-xs text-neutral-500 outline-none focus:border-primary"
+                          >
+                            <option value="">Asignar grupo…</option>
+                            {groups.map((g) => (
+                              <option key={g.id} value={g.id}>
+                                {groupLabel(g)}
+                              </option>
+                            ))}
+                          </select>
+                        )
+                      )}
+                      {!condensed && s.duration_minutes && <span>{s.duration_minutes} min</span>}
+                    </div>
                   </div>
                   {condensed ? (
                     <div className="space-y-1">
@@ -184,15 +280,15 @@ export default function GameDetailPage() {
                 </div>
               );
             })}
-            {!showAllHistory && sessions.length > HISTORY_PREVIEW_COUNT && (
+            {!showAllHistory && visibleSessions.length > HISTORY_PREVIEW_COUNT && (
               <button
                 onClick={() => setShowAllHistory(true)}
                 className="w-full rounded-xl border-2 border-dashed border-primary/30 py-2 text-sm font-medium text-primary hover:bg-primary/5 transition-colors"
               >
-                Ver más ({sessions.length - HISTORY_PREVIEW_COUNT} más)
+                Ver más ({visibleSessions.length - HISTORY_PREVIEW_COUNT} más)
               </button>
             )}
-            {showAllHistory && sessions.length > HISTORY_PREVIEW_COUNT && (
+            {showAllHistory && visibleSessions.length > HISTORY_PREVIEW_COUNT && (
               <button
                 onClick={() => setShowAllHistory(false)}
                 className="w-full rounded-xl border-2 border-dashed border-neutral-200 py-2 text-sm font-medium text-neutral-400 hover:bg-neutral-50 transition-colors"

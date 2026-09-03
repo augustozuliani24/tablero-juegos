@@ -17,14 +17,33 @@ create table games (
   created_at timestamptz not null default now()
 );
 
+-- Grupos de amigos: cada partida pertenece a uno solo. Si dos grupos se juntan
+-- a jugar, se crea un grupo aparte para esa juntada (ej. "Pepas + Facu").
+create table player_groups (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  emoji text,
+  created_by uuid references players(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+
+create table group_members (
+  group_id uuid not null references player_groups(id) on delete cascade,
+  player_id uuid not null references players(id) on delete cascade,
+  primary key (group_id, player_id)
+);
+
 create table sessions (
   id uuid primary key default gen_random_uuid(),
   game_id uuid not null references games(id) on delete cascade,
+  group_id uuid references player_groups(id) on delete set null,
   played_at timestamptz not null default now(),
   duration_minutes int,
   created_by uuid references players(id) on delete set null,
   created_at timestamptz not null default now()
 );
+
+create index sessions_group_id_idx on sessions(group_id);
 
 create table teams (
   id uuid primary key default gen_random_uuid(),
@@ -44,13 +63,16 @@ create table scores (
   is_winner boolean not null default false
 );
 
--- Vista: estadisticas por jugador y juego (para la tabla de cada juego)
+-- Vista: estadisticas por jugador, juego y grupo (para la tabla de cada juego).
+-- Abre una fila por grupo: el front las suma para ver "todos los grupos" o
+-- filtra por group_id para ver el de uno solo.
 create view player_game_stats as
 select
   g.id as game_id,
   g.name as game_name,
   p.id as player_id,
   p.name as player_name,
+  s.group_id as group_id,
   count(distinct s.id) as sessions_played,
   count(distinct s.id) filter (where sc.is_winner) as wins,
   coalesce(sum(sc.points), 0) as total_points
@@ -60,13 +82,14 @@ join teams t on t.id = tm.team_id
 join sessions s on s.id = t.session_id
 join games g on g.id = s.game_id
 join scores sc on sc.team_id = t.id
-group by g.id, g.name, p.id, p.name;
+group by g.id, g.name, p.id, p.name, s.group_id;
 
--- Vista: estadisticas generales por jugador (para el ranking general)
+-- Vista: estadisticas generales por jugador y grupo (para el ranking general)
 create view player_overall_stats as
 select
   p.id as player_id,
   p.name as player_name,
+  s.group_id as group_id,
   count(distinct s.id) as sessions_played,
   count(distinct s.id) filter (where sc.is_winner) as wins,
   coalesce(sum(sc.points), 0) as total_points,
@@ -76,12 +99,14 @@ join team_members tm on tm.player_id = p.id
 join teams t on t.id = tm.team_id
 join sessions s on s.id = t.session_id
 join scores sc on sc.team_id = t.id
-group by p.id, p.name;
+group by p.id, p.name, s.group_id;
 
 -- RLS abierta: no hay autenticacion, es un grupo de amigos de confianza
 -- que solo elige su nombre. Cualquiera con el anon key puede leer y escribir.
 alter table players enable row level security;
 alter table games enable row level security;
+alter table player_groups enable row level security;
+alter table group_members enable row level security;
 alter table sessions enable row level security;
 alter table teams enable row level security;
 alter table team_members enable row level security;
@@ -95,8 +120,18 @@ create policy "public read games" on games for select using (true);
 create policy "public insert games" on games for insert with check (true);
 create policy "public delete games" on games for delete using (true);
 
+create policy "public read player_groups" on player_groups for select using (true);
+create policy "public insert player_groups" on player_groups for insert with check (true);
+create policy "public update player_groups" on player_groups for update using (true) with check (true);
+create policy "public delete player_groups" on player_groups for delete using (true);
+
+create policy "public read group_members" on group_members for select using (true);
+create policy "public insert group_members" on group_members for insert with check (true);
+create policy "public delete group_members" on group_members for delete using (true);
+
 create policy "public read sessions" on sessions for select using (true);
 create policy "public insert sessions" on sessions for insert with check (true);
+create policy "public update sessions" on sessions for update using (true) with check (true);
 create policy "public delete sessions" on sessions for delete using (true);
 
 create policy "public read teams" on teams for select using (true);

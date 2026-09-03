@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import type { PlayerOverallStats } from "@/lib/database.types";
+import { GroupFilter, matchesGroupFilter } from "@/components/group-filter";
+import { ALL_GROUPS, fetchGroups, recallGroup } from "@/lib/groups";
+import type { PlayerGroup, PlayerOverallStats } from "@/lib/database.types";
 
 const TABS = [
   { key: "wins", label: "Victorias" },
@@ -12,26 +14,72 @@ const TABS = [
 
 type SortKey = (typeof TABS)[number]["key"];
 
+type AggregatedStats = {
+  player_id: string;
+  player_name: string;
+  sessions_played: number;
+  wins: number;
+  total_points: number;
+  combined_score: number;
+};
+
 export default function RankingPage() {
   const [stats, setStats] = useState<PlayerOverallStats[]>([]);
+  const [groups, setGroups] = useState<PlayerGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [sortKey, setSortKey] = useState<SortKey>("wins");
+  const [groupFilter, setGroupFilter] = useState<string>(ALL_GROUPS);
 
   useEffect(() => {
-    supabase
-      .from("player_overall_stats")
-      .select("*")
-      .then(({ data }) => {
-        setStats(data ?? []);
-        setLoading(false);
-      });
+    Promise.all([
+      supabase.from("player_overall_stats").select("*"),
+      fetchGroups(),
+    ]).then(([{ data }, groupsData]) => {
+      setStats(data ?? []);
+      setGroups(groupsData);
+
+      // Arrancamos en el último grupo con el que cargaron una partida
+      const remembered = recallGroup();
+      if (remembered && groupsData.some((g) => g.id === remembered)) setGroupFilter(remembered);
+
+      setLoading(false);
+    });
   }, []);
 
-  const sorted = [...stats].sort((a, b) => b[sortKey] - a[sortKey]);
+  const hasUngrouped = stats.some((s) => s.group_id === null);
+
+  // Las vistas traen una fila por jugador y grupo: acá las sumamos según el filtro.
+  const sorted = useMemo(() => {
+    const byPlayer = new Map<string, AggregatedStats>();
+    for (const row of stats) {
+      if (!matchesGroupFilter(row.group_id, groupFilter)) continue;
+      const acc = byPlayer.get(row.player_id) ?? {
+        player_id: row.player_id,
+        player_name: row.player_name,
+        sessions_played: 0,
+        wins: 0,
+        total_points: 0,
+        combined_score: 0,
+      };
+      acc.sessions_played += row.sessions_played;
+      acc.wins += row.wins;
+      acc.total_points += row.total_points;
+      acc.combined_score += row.combined_score;
+      byPlayer.set(row.player_id, acc);
+    }
+    return Array.from(byPlayer.values()).sort((a, b) => b[sortKey] - a[sortKey]);
+  }, [stats, groupFilter, sortKey]);
+
+  const activeGroup = groups.find((g) => g.id === groupFilter);
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-bold text-primary-dark">🏆 Ranking general</h1>
+      <div>
+        <h1 className="text-2xl font-bold text-primary-dark">🏆 Ranking general</h1>
+        {activeGroup && <p className="text-sm text-neutral-500">Solo partidas de {activeGroup.name}</p>}
+      </div>
+
+      <GroupFilter groups={groups} value={groupFilter} onChange={setGroupFilter} showNoGroup={hasUngrouped} />
 
       <div className="flex gap-2">
         {TABS.map((tab) => (
@@ -52,9 +100,13 @@ export default function RankingPage() {
       {loading ? (
         <p className="text-sm text-neutral-500">Cargando...</p>
       ) : sorted.length === 0 ? (
-        <p className="text-sm text-neutral-500">Todavía no hay partidas cargadas.</p>
+        <p className="text-sm text-neutral-500">
+          {groupFilter === ALL_GROUPS
+            ? "Todavía no hay partidas cargadas."
+            : "Este grupo todavía no tiene partidas cargadas."}
+        </p>
       ) : (
-        <div className="overflow-hidden rounded-2xl border-2 border-primary/10 bg-white">
+        <div className="overflow-x-auto rounded-2xl border-2 border-primary/10 bg-white">
           <table className="w-full text-sm">
             <thead className="bg-primary/5 text-left text-primary-dark">
               <tr>

@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
-import type { Game, Player } from "@/lib/database.types";
+import { fetchGroupMembers, fetchGroups, groupLabel } from "@/lib/groups";
+import type { Game, GroupMember, Player, PlayerGroup } from "@/lib/database.types";
 
 const SESSION_KEY = "tablero.isAdmin";
 const ADMIN_PASSWORD = process.env.NEXT_PUBLIC_ADMIN_PASSWORD ?? "";
@@ -15,6 +16,12 @@ export default function AdminPage() {
 
   const [players, setPlayers] = useState<Player[]>([]);
   const [games, setGames] = useState<Game[]>([]);
+  const [groups, setGroups] = useState<PlayerGroup[]>([]);
+  const [groupMembers, setGroupMembers] = useState<GroupMember[]>([]);
+  const [expandedGroupId, setExpandedGroupId] = useState<string | null>(null);
+  const [newGroupName, setNewGroupName] = useState("");
+  const [newGroupEmoji, setNewGroupEmoji] = useState("");
+  const [groupError, setGroupError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -24,12 +31,16 @@ export default function AdminPage() {
 
   async function loadData() {
     setLoading(true);
-    const [{ data: playersData }, { data: gamesData }] = await Promise.all([
+    const [{ data: playersData }, { data: gamesData }, groupsData, membersData] = await Promise.all([
       supabase.from("players").select("*").order("name"),
       supabase.from("games").select("*").order("name"),
+      fetchGroups(),
+      fetchGroupMembers(),
     ]);
     setPlayers(playersData ?? []);
     setGames(gamesData ?? []);
+    setGroups(groupsData);
+    setGroupMembers(membersData);
     setLoading(false);
   }
 
@@ -89,6 +100,61 @@ export default function AdminPage() {
 
     await loadData();
     setBusyId(null);
+  }
+
+  async function createGroup(e: React.FormEvent) {
+    e.preventDefault();
+    const name = newGroupName.trim();
+    if (!name) return;
+    setGroupError("");
+    setBusyId("new-group");
+    const { error: insertError } = await supabase
+      .from("player_groups")
+      .insert({ name, emoji: newGroupEmoji.trim() || null });
+    setBusyId(null);
+    if (insertError) {
+      setGroupError("Ya existe un grupo con ese nombre.");
+      return;
+    }
+    setNewGroupName("");
+    setNewGroupEmoji("");
+    await loadData();
+  }
+
+  async function renameGroup(g: PlayerGroup) {
+    const name = prompt(`Nuevo nombre para "${g.name}":`, g.name)?.trim();
+    if (!name || name === g.name) return;
+    setBusyId(g.id);
+    const { error: updateError } = await supabase.from("player_groups").update({ name }).eq("id", g.id);
+    setBusyId(null);
+    if (updateError) {
+      setGroupError("Ya existe un grupo con ese nombre.");
+      return;
+    }
+    await loadData();
+  }
+
+  async function deleteGroup(g: PlayerGroup) {
+    if (
+      !confirm(
+        `¿Borrar el grupo "${g.name}"? Las partidas no se borran, pero quedan como "Sin grupo" y salen del ranking del grupo.`
+      )
+    )
+      return;
+    setBusyId(g.id);
+    await supabase.from("player_groups").delete().eq("id", g.id);
+    await loadData();
+    setBusyId(null);
+  }
+
+  async function addMember(groupId: string, playerId: string) {
+    setGroupMembers((prev) => [...prev, { group_id: groupId, player_id: playerId }]);
+    await supabase.from("group_members").insert({ group_id: groupId, player_id: playerId });
+  }
+
+  async function removeMember(groupId: string, playerId: string) {
+    setGroupMembers((prev) => prev.filter((m) => !(m.group_id === groupId && m.player_id === playerId)));
+    await supabase.from("group_members").delete().eq("group_id", groupId).eq("player_id", playerId);
   }
 
   async function deleteGame(g: Game) {
@@ -167,6 +233,119 @@ export default function AdminPage() {
         <p className="text-sm text-neutral-500">Cargando...</p>
       ) : (
         <>
+          <section className="space-y-2">
+            <h2 className="text-sm font-semibold text-neutral-500">Grupos</h2>
+            <p className="text-xs text-neutral-400">
+              Cada partida se carga con un grupo. Si dos grupos se juntan a jugar, creá un grupo aparte para esa
+              juntada (ej. “Pepas + Facu”): esas partidas van a tener su propio ranking.
+            </p>
+
+            <form onSubmit={createGroup} className="flex gap-2">
+              <input
+                value={newGroupEmoji}
+                onChange={(e) => setNewGroupEmoji(e.target.value)}
+                maxLength={2}
+                placeholder="🎲"
+                className="w-14 rounded-xl border-2 border-primary/10 px-2 py-2 text-center outline-none focus:border-primary"
+              />
+              <input
+                value={newGroupName}
+                onChange={(e) => setNewGroupName(e.target.value)}
+                placeholder="Nombre del grupo"
+                className="flex-1 rounded-xl border-2 border-primary/10 px-3 py-2 text-sm outline-none focus:border-primary"
+              />
+              <button
+                type="submit"
+                disabled={!newGroupName.trim() || busyId === "new-group"}
+                className="shrink-0 rounded-xl bg-gradient-to-r from-primary to-pink px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+              >
+                Crear
+              </button>
+            </form>
+            {groupError && <p className="text-sm text-pink">{groupError}</p>}
+
+            <div className="space-y-2">
+              {groups.map((g) => {
+                const memberIds = groupMembers.filter((m) => m.group_id === g.id).map((m) => m.player_id);
+                const members = players.filter((p) => memberIds.includes(p.id));
+                const nonMembers = players.filter((p) => !memberIds.includes(p.id));
+                const expanded = expandedGroupId === g.id;
+                return (
+                  <div key={g.id} className="rounded-xl border-2 border-primary/10 bg-white px-4 py-2.5">
+                    <div className="flex items-center justify-between gap-3">
+                      <button
+                        onClick={() => setExpandedGroupId(expanded ? null : g.id)}
+                        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                      >
+                        <span className="truncate font-medium">{groupLabel(g)}</span>
+                        <span className="shrink-0 text-xs text-neutral-400">
+                          {members.length} {members.length === 1 ? "integrante" : "integrantes"} {expanded ? "▲" : "▼"}
+                        </span>
+                      </button>
+                      <div className="flex shrink-0 gap-3">
+                        <button
+                          onClick={() => renameGroup(g)}
+                          disabled={busyId === g.id}
+                          className="text-sm font-medium text-accent hover:underline disabled:opacity-40"
+                        >
+                          Renombrar
+                        </button>
+                        <button
+                          onClick={() => deleteGroup(g)}
+                          disabled={busyId === g.id}
+                          className="text-sm font-medium text-pink hover:underline disabled:opacity-40"
+                        >
+                          Borrar
+                        </button>
+                      </div>
+                    </div>
+
+                    {expanded && (
+                      <div className="mt-3 space-y-2 border-t border-neutral-100 pt-3">
+                        {members.length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {members.map((p) => (
+                              <span
+                                key={p.id}
+                                className="flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary-dark"
+                              >
+                                {p.name}
+                                <button
+                                  onClick={() => removeMember(g.id, p.id)}
+                                  className="text-primary-dark/50 hover:text-pink"
+                                >
+                                  ✕
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-neutral-400">
+                            Todavía no tiene integrantes. Se van sumando solos cuando cargás una partida con este grupo.
+                          </p>
+                        )}
+                        {nonMembers.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {nonMembers.map((p) => (
+                              <button
+                                key={p.id}
+                                onClick={() => addMember(g.id, p.id)}
+                                className="rounded-full border border-dashed border-neutral-300 px-2.5 py-1 text-xs text-neutral-500 hover:border-primary hover:text-primary transition-colors"
+                              >
+                                + {p.name}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {groups.length === 0 && <p className="text-sm text-neutral-400">Todavía no hay grupos creados.</p>}
+            </div>
+          </section>
+
           <section className="space-y-2">
             <h2 className="text-sm font-semibold text-neutral-500">Juegos</h2>
             <div className="space-y-2">

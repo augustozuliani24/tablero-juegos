@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { usePlayer } from "@/contexts/player-context";
-import type { GameMode, Player } from "@/lib/database.types";
+import { fetchGroupMembers, fetchGroups, groupLabel, recallGroup, rememberGroup } from "@/lib/groups";
+import type { GameMode, GroupMember, Player, PlayerGroup } from "@/lib/database.types";
 
 type FfaEntry = {
   playerId: string;
@@ -28,6 +29,13 @@ export function LogSessionForm({ gameId, mode, onLogged }: { gameId: string; mod
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
+  const [groups, setGroups] = useState<PlayerGroup[]>([]);
+  const [groupMembers, setGroupMembers] = useState<GroupMember[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [showAllPlayers, setShowAllPlayers] = useState(false);
+  const [newGroupName, setNewGroupName] = useState("");
+  const [creatingGroup, setCreatingGroup] = useState(false);
+
   const [ffaEntries, setFfaEntries] = useState<FfaEntry[]>([]);
   const [teams, setTeams] = useState<TeamEntry[]>([
     { id: nextId(), name: "Equipo 1", playerIds: [], points: "" },
@@ -43,6 +51,19 @@ export function LogSessionForm({ gameId, mode, onLogged }: { gameId: string; mod
       .then(({ data }) => setAllPlayers(data ?? []));
   }, []);
 
+  useEffect(() => {
+    Promise.all([fetchGroups(), fetchGroupMembers()]).then(([groupsData, membersData]) => {
+      setGroups(groupsData);
+      setGroupMembers(membersData);
+
+      // Preseleccionamos el último grupo usado (o el único que haya) para que
+      // cargar una partida siga siendo un par de toques.
+      const remembered = recallGroup();
+      if (remembered && groupsData.some((g) => g.id === remembered)) setSelectedGroupId(remembered);
+      else if (groupsData.length === 1) setSelectedGroupId(groupsData[0].id);
+    });
+  }, []);
+
   async function ensurePlayer(name: string): Promise<Player | null> {
     const trimmed = name.trim();
     if (!trimmed) return null;
@@ -53,9 +74,42 @@ export function LogSessionForm({ gameId, mode, onLogged }: { gameId: string; mod
     return created;
   }
 
+  async function createGroup() {
+    const name = newGroupName.trim();
+    if (!name) return;
+    setCreatingGroup(true);
+    setError("");
+    const { data, error: insertError } = await supabase
+      .from("player_groups")
+      .insert({ name, created_by: player?.id ?? null })
+      .select("*")
+      .single();
+    setCreatingGroup(false);
+    if (insertError || !data) {
+      setError("Ya existe un grupo con ese nombre.");
+      return;
+    }
+    setGroups((prev) => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
+    setSelectedGroupId(data.id);
+    setNewGroupName("");
+  }
+
   const usedPlayerIds =
     mode === "ffa" ? ffaEntries.map((e) => e.playerId) : teams.flatMap((t) => t.playerIds);
   const availablePlayers = allPlayers.filter((p) => !usedPlayerIds.includes(p.id));
+
+  const selectedGroupMemberIds = useMemo(
+    () => new Set(groupMembers.filter((m) => m.group_id === selectedGroupId).map((m) => m.player_id)),
+    [groupMembers, selectedGroupId]
+  );
+
+  // Con un grupo elegido mostramos primero a sus integrantes; el resto queda
+  // detrás de un botón para no llenar la pantalla de nombres.
+  const suggestedPlayers =
+    selectedGroupId && !showAllPlayers
+      ? availablePlayers.filter((p) => selectedGroupMemberIds.has(p.id))
+      : availablePlayers;
+  const hiddenPlayersCount = availablePlayers.length - suggestedPlayers.length;
 
   function addExistingPlayer(p: Player, teamId?: string) {
     if (mode === "ffa") {
@@ -108,6 +162,17 @@ export function LogSessionForm({ gameId, mode, onLogged }: { gameId: string; mod
     return allPlayers.find((p) => p.id === id)?.name ?? "?";
   }
 
+  /** Suma al grupo a los que jugaron y todavía no eran integrantes. */
+  async function syncGroupMembers(groupId: string, playerIds: string[]) {
+    const nuevos = playerIds.filter((id) => !selectedGroupMemberIds.has(id));
+    if (nuevos.length === 0) return;
+    const rows = nuevos.map((playerId) => ({ group_id: groupId, player_id: playerId }));
+    const { error: membersError } = await supabase
+      .from("group_members")
+      .upsert(rows, { onConflict: "group_id,player_id", ignoreDuplicates: true });
+    if (!membersError) setGroupMembers((prev) => [...prev, ...rows]);
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
@@ -126,7 +191,7 @@ export function LogSessionForm({ gameId, mode, onLogged }: { gameId: string; mod
 
     const numericPoints = rawGroups.map((g) => Number(g.points) || 0);
     const maxPoints = Math.max(...numericPoints);
-    const groups = rawGroups.map((g, i) => ({ ...g, winner: maxPoints > 0 && numericPoints[i] === maxPoints }));
+    const groupsToSave = rawGroups.map((g, i) => ({ ...g, winner: maxPoints > 0 && numericPoints[i] === maxPoints }));
 
     setSaving(true);
     try {
@@ -134,6 +199,7 @@ export function LogSessionForm({ gameId, mode, onLogged }: { gameId: string; mod
         .from("sessions")
         .insert({
           game_id: gameId,
+          group_id: selectedGroupId,
           duration_minutes: duration ? Number(duration) : null,
           created_by: player?.id ?? null,
         })
@@ -141,7 +207,7 @@ export function LogSessionForm({ gameId, mode, onLogged }: { gameId: string; mod
         .single();
       if (sessionError) throw sessionError;
 
-      for (const group of groups) {
+      for (const group of groupsToSave) {
         const { data: team, error: teamError } = await supabase
           .from("teams")
           .insert({ session_id: session.id, label: group.name })
@@ -162,6 +228,11 @@ export function LogSessionForm({ gameId, mode, onLogged }: { gameId: string; mod
         if (scoreError) throw scoreError;
       }
 
+      if (selectedGroupId) {
+        await syncGroupMembers(selectedGroupId, groupsToSave.flatMap((g) => g.playerIds));
+        rememberGroup(selectedGroupId);
+      }
+
       setFfaEntries([]);
       setTeams([
         { id: nextId(), name: "Equipo 1", playerIds: [] , points: "" },
@@ -178,12 +249,71 @@ export function LogSessionForm({ gameId, mode, onLogged }: { gameId: string; mod
 
   return (
     <form onSubmit={submit} className="animate-float-in space-y-5 rounded-2xl border-2 border-primary/10 bg-white p-4 shadow-sm">
+      <div className="space-y-2">
+        <p className="text-sm font-semibold text-primary-dark">¿Qué grupo jugó?</p>
+        <div className="flex flex-wrap gap-2">
+          {groups.map((g) => (
+            <button
+              type="button"
+              key={g.id}
+              onClick={() => {
+                setSelectedGroupId(g.id);
+                setShowAllPlayers(false);
+              }}
+              className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                selectedGroupId === g.id
+                  ? "bg-gradient-to-r from-primary to-pink text-white shadow-md shadow-primary/30"
+                  : "border-2 border-primary/20 text-neutral-600 hover:border-primary"
+              }`}
+            >
+              {groupLabel(g)}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedGroupId(null);
+              setShowAllPlayers(false);
+            }}
+            className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+              selectedGroupId === null
+                ? "bg-neutral-700 text-white"
+                : "border-2 border-neutral-200 text-neutral-500 hover:border-neutral-400"
+            }`}
+          >
+            Sin grupo
+          </button>
+        </div>
+
+        <div className="flex gap-2">
+          <input
+            value={newGroupName}
+            onChange={(e) => setNewGroupName(e.target.value)}
+            placeholder="Crear un grupo nuevo (ej. Pepas)"
+            className="flex-1 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm outline-none focus:border-primary"
+          />
+          <button
+            type="button"
+            onClick={createGroup}
+            disabled={!newGroupName.trim() || creatingGroup}
+            className="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
+          >
+            Crear
+          </button>
+        </div>
+        <p className="text-xs text-neutral-400">
+          Si dos grupos se juntan a jugar, creá un grupo aparte para esa juntada (ej. “Pepas + Facu”) y esas partidas
+          van a tener su propio ranking.
+        </p>
+      </div>
+
+      <div className="border-t border-neutral-100 pt-4">
       {mode === "ffa" ? (
         <div className="space-y-3">
           <p className="text-sm font-semibold text-primary-dark">Jugadores</p>
-          {availablePlayers.length > 0 && (
+          {suggestedPlayers.length > 0 && (
             <div className="flex flex-wrap gap-2">
-              {availablePlayers.map((p) => (
+              {suggestedPlayers.map((p) => (
                 <button
                   type="button"
                   key={p.id}
@@ -194,6 +324,15 @@ export function LogSessionForm({ gameId, mode, onLogged }: { gameId: string; mod
                 </button>
               ))}
             </div>
+          )}
+          {hiddenPlayersCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowAllPlayers(true)}
+              className="text-xs font-medium text-primary hover:underline"
+            >
+              + Mostrar otros jugadores ({hiddenPlayersCount})
+            </button>
           )}
           <div className="flex gap-2">
             <input
@@ -272,9 +411,9 @@ export function LogSessionForm({ gameId, mode, onLogged }: { gameId: string; mod
                 ))}
               </div>
 
-              {availablePlayers.length > 0 && (
+              {suggestedPlayers.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
-                  {availablePlayers.map((p) => (
+                  {suggestedPlayers.map((p) => (
                     <button
                       type="button"
                       key={p.id}
@@ -285,6 +424,15 @@ export function LogSessionForm({ gameId, mode, onLogged }: { gameId: string; mod
                     </button>
                   ))}
                 </div>
+              )}
+              {hiddenPlayersCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllPlayers(true)}
+                  className="text-xs font-medium text-primary hover:underline"
+                >
+                  + Mostrar otros jugadores ({hiddenPlayersCount})
+                </button>
               )}
 
               <div className="flex gap-2">
@@ -314,6 +462,7 @@ export function LogSessionForm({ gameId, mode, onLogged }: { gameId: string; mod
           </button>
         </div>
       )}
+      </div>
 
       <div className="flex items-center gap-2">
         <label className="text-sm text-neutral-500">Duración (min)</label>
