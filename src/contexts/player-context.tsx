@@ -31,9 +31,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       .select("*")
       .eq("id", storedId)
       .maybeSingle()
-      .then(({ data }) => {
+      .then(({ data, error }) => {
         if (data) setPlayer(data);
-        else localStorage.removeItem(STORAGE_KEY);
+        // Solo olvidar el perfil si la base confirma que ya no existe;
+        // si la base no responde, lo conservamos para el próximo intento.
+        else if (!error) localStorage.removeItem(STORAGE_KEY);
         setLoading(false);
       });
   }, []);

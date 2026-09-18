@@ -16,13 +16,18 @@ export function PlayerGate({ children }: { children: ReactNode }) {
   const [name, setName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [connectionError, setConnectionError] = useState(false);
 
   useEffect(() => {
     if (player || loading) return;
     supabase
       .from("players")
       .select("*")
-      .then(({ data }) => {
+      .then(({ data, error: fetchError }) => {
+        if (fetchError) {
+          setConnectionError(true);
+          return;
+        }
         const sorted = [...(data ?? [])].sort((a, b) =>
           firstName(a.name).localeCompare(firstName(b.name), "es", { sensitivity: "base" })
         );
@@ -33,6 +38,26 @@ export function PlayerGate({ children }: { children: ReactNode }) {
 
   if (loading) {
     return <div className="flex min-h-screen items-center justify-center text-sm text-neutral-500">Cargando...</div>;
+  }
+
+  if (!player && connectionError) {
+    return (
+      <div className="flex min-h-screen items-center justify-center px-4">
+        <div className="animate-pop-in w-full max-w-sm space-y-4 rounded-3xl bg-white p-8 text-center shadow-xl shadow-primary/10">
+          <div className="text-5xl">🔌</div>
+          <h1 className="text-xl font-bold text-primary-dark">No se pudo conectar con la base de datos</h1>
+          <p className="text-sm text-neutral-500">
+            Tus perfiles y partidas están guardados. Probá de nuevo en unos minutos.
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="w-full rounded-xl bg-gradient-to-r from-primary to-pink px-4 py-3 font-semibold text-white shadow-lg shadow-primary/30 transition active:scale-95"
+          >
+            Reintentar
+          </button>
+        </div>
+      </div>
+    );
   }
 
   if (!player) {
